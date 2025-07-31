@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Load Testing API Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; }
+        .form-group { margin-bottom: 15px; }
+        input, button { padding: 10px; margin: 5px; width: 200px; }
+        .result { background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; border: 1px solid #f5c6cb; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Load Testing API Test</h1>
+    <p>Test the /api/login endpoint for JMeter</p>
+    
+    <form id="loginForm">
+        <div class="form-group">
+            <input type="text" id="email" placeholder="Email" value="tester001@jmeter.test" required>
+        </div>
+        <div class="form-group">
+            <input type="text" id="password" placeholder="Password" value="Password1234!" required>
+        </div>
+        <button type="submit">Test Login API</button>
+    </form>
+    
+    <div id="result"></div>
+    
+    <h3>JMeter Configuration:</h3>
+    <pre style="background: #f5f5f5; padding: 10px; border-radius: 5px;">
+HTTP Request Configuration:
+- Method: POST
+- URL: https://your-vercel-url.vercel.app/api/login
+- Content-Type: application/json
+- Body: {"email":"${email}","password":"${password}"}
+
+Expected Response:
+{
+  "success": true,
+  "message": "Login successful",
+  "data": {
+    "sessionId": "session_...",
+    "email": "test@example.com",
+    "password": "password123",
+    "loginTime": "2025-07-31T...",
+    "status": "active"
+  }
+}
+    </pre>
+
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const resultDiv = document.getElementById('result');
+            
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                
+                const data = await response.json();
+                
+                resultDiv.innerHTML = `
+                    <div class="${data.success ? 'success' : 'error'}">
+                        <h4>Response (${response.status}):</h4>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    </div>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <h4>Error:</h4>
+                        <pre>${error.message}</pre>
+                    </div>
+                `;
+            }
+        });
+    </script>
+</body>
+</html>

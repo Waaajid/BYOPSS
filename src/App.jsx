@@ -62,7 +62,7 @@ function App() {
   };
 
   // Handle login - ADD to existing logins, don't replace
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     
     if (!loginData.email || !loginData.password) {
@@ -73,7 +73,21 @@ function App() {
     const loginTime = new Date();
     const sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     
-    // Create new login record
+    // Also send to API endpoint for JMeter compatibility
+    try {
+      await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: loginData.email,
+          password: loginData.password
+        })
+      });
+    } catch (error) {
+      console.log('API call failed (ok for local testing):', error);
+    }
+    
+    // Create new login record for localStorage
     const newLogin = {
       id: sessionId,
       email: loginData.email,
