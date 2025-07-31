@@ -1,70 +1,68 @@
 import { useState, useEffect } from 'react'
 import './App.css'
 
-const API_BASE = 'http://localhost:3001/api';
-
 function App() {
   // Authentication state
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const [loginData, setLoginData] = useState({ email: '', password: '' });
-  const [loginSessions, setLoginSessions] = useState([]);
-  const [activeUsers, setActiveUsers] = useState([]);
+  const [allLogins, setAllLogins] = useState([]);
   const [currentView, setCurrentView] = useState('dashboard');
-  const [loading, setLoading] = useState(false);
-  const [stats, setStats] = useState({ totalSessions: 0, activeSessions: 0 });
 
-  // Fetch sessions from server
-  const fetchSessions = async () => {
-    try {
-      const response = await fetch(`${API_BASE}/sessions`);
-      const data = await response.json();
-      setLoginSessions(data.sessions);
-      setActiveUsers(data.activeUsers);
-      setStats({
-        totalSessions: data.totalSessions,
-        activeSessions: data.activeSessions
-      });
-    } catch (error) {
-      console.error('Error fetching sessions:', error);
-    }
-  };
-
-  // Check for existing session on mount and set up intervals
+  // Load all login data on mount and listen for changes
   useEffect(() => {
-    const savedUser = localStorage.getItem('currentUser');
+    loadAllLogins();
     
+    // Check if current user exists
+    const savedUser = localStorage.getItem('currentUser');
     if (savedUser) {
       setCurrentUser(JSON.parse(savedUser));
       setIsLoggedIn(true);
     }
+
+    // Listen for storage changes from other tabs/browsers
+    const handleStorageChange = () => {
+      loadAllLogins();
+    };
+
+    window.addEventListener('storage', handleStorageChange);
     
-    // Fetch initial data
-    fetchSessions();
-
-    // Update sessions every 30 seconds
-    const interval = setInterval(() => {
-      fetchSessions();
-      updateSessionDurations();
-    }, 30000);
-
-    return () => clearInterval(interval);
+    // Update durations every 30 seconds
+    const interval = setInterval(updateLoginDurations, 30000);
+    
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      clearInterval(interval);
+    };
   }, []);
 
-  // Update session durations on server
-  const updateSessionDurations = async () => {
-    try {
-      await fetch(`${API_BASE}/update-sessions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (error) {
-      console.error('Error updating sessions:', error);
+  // Load all logins from localStorage
+  const loadAllLogins = () => {
+    const saved = localStorage.getItem('allLogins');
+    if (saved) {
+      setAllLogins(JSON.parse(saved));
     }
   };
 
-  // Login function
-  const handleLogin = async (e) => {
+  // Update login durations
+  const updateLoginDurations = () => {
+    const saved = localStorage.getItem('allLogins');
+    if (saved) {
+      const logins = JSON.parse(saved);
+      const now = new Date();
+      
+      const updated = logins.map(login => ({
+        ...login,
+        minutesActive: Math.round((now - new Date(login.loginTime)) / 1000 / 60)
+      }));
+      
+      setAllLogins(updated);
+      localStorage.setItem('allLogins', JSON.stringify(updated));
+    }
+  };
+
+  // Handle login - ADD to existing logins, don't replace
+  const handleLogin = (e) => {
     e.preventDefault();
     
     if (!loginData.email || !loginData.password) {
@@ -72,144 +70,145 @@ function App() {
       return;
     }
 
-    setLoading(true);
+    const loginTime = new Date();
+    const sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    
+    // Create new login record
+    const newLogin = {
+      id: sessionId,
+      email: loginData.email,
+      password: loginData.password,
+      loginTime: loginTime.toISOString(),
+      minutesActive: 0,
+      isActive: true,
+      userAgent: navigator.userAgent,
+      browser: getBrowserName()
+    };
 
-    try {
-      const response = await fetch(`${API_BASE}/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: loginData.email,
-          password: loginData.password
-        })
-      });
+    // Get existing logins and ADD this new one
+    const existingLogins = JSON.parse(localStorage.getItem('allLogins') || '[]');
+    const updatedLogins = [...existingLogins, newLogin];
+    
+    // Save all logins
+    setAllLogins(updatedLogins);
+    localStorage.setItem('allLogins', JSON.stringify(updatedLogins));
 
-      const data = await response.json();
-
-      if (data.success) {
-        setCurrentUser(data.user);
-        setIsLoggedIn(true);
-        setStats(data.stats);
-        
-        // Save user to localStorage for persistence across page reloads
-        localStorage.setItem('currentUser', JSON.stringify(data.user));
-        
-        // Refresh session data
-        fetchSessions();
-        
-        setLoginData({ email: '', password: '' });
-      } else {
-        alert('Login failed: ' + (data.error || 'Unknown error'));
-      }
-    } catch (error) {
-      console.error('Login error:', error);
-      alert('Login failed: Server not responding');
-    } finally {
-      setLoading(false);
-    }
+    // Set current user
+    const user = {
+      sessionId,
+      email: loginData.email,
+      password: loginData.password,
+      loginTime: loginTime.toISOString()
+    };
+    
+    setCurrentUser(user);
+    setIsLoggedIn(true);
+    localStorage.setItem('currentUser', JSON.stringify(user));
+    
+    // Trigger storage event for other tabs
+    window.dispatchEvent(new Event('storage'));
+    
+    setLoginData({ email: '', password: '' });
   };
 
-  // Logout function
-  const handleLogout = async () => {
+  // Helper function to get browser name
+  const getBrowserName = () => {
+    const userAgent = navigator.userAgent;
+    if (userAgent.includes('Chrome')) return 'Chrome';
+    if (userAgent.includes('Firefox')) return 'Firefox';
+    if (userAgent.includes('Safari')) return 'Safari';
+    if (userAgent.includes('Edge')) return 'Edge';
+    return 'Other';
+  };
+
+  // Logout function - mark as inactive
+  const handleLogout = () => {
     if (!currentUser) return;
 
-    try {
-      const response = await fetch(`${API_BASE}/logout`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: currentUser.sessionId
-        })
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        setStats(data.stats);
-        fetchSessions();
+    const logoutTime = new Date();
+    
+    // Update the login record to mark as inactive
+    const existingLogins = JSON.parse(localStorage.getItem('allLogins') || '[]');
+    const updatedLogins = existingLogins.map(login => {
+      if (login.id === currentUser.sessionId) {
+        const duration = Math.round((logoutTime - new Date(login.loginTime)) / 1000 / 60);
+        return {
+          ...login,
+          isActive: false,
+          logoutTime: logoutTime.toISOString(),
+          minutesActive: duration
+        };
       }
-    } catch (error) {
-      console.error('Logout error:', error);
-    }
-
-    // Clear local state
+      return login;
+    });
+    
+    setAllLogins(updatedLogins);
+    localStorage.setItem('allLogins', JSON.stringify(updatedLogins));
+    
+    // Clear current user
     setCurrentUser(null);
     setIsLoggedIn(false);
     localStorage.removeItem('currentUser');
+    
+    // Trigger storage event for other tabs
+    window.dispatchEvent(new Event('storage'));
   };
 
-    // Clear local state
-    setCurrentUser(null);
-    setIsLoggedIn(false);
-    localStorage.removeItem('currentUser');
+  // Clear old logins (older than 10 minutes)
+  const clearOldLogins = () => {
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+    const existingLogins = JSON.parse(localStorage.getItem('allLogins') || '[]');
+    const recentLogins = existingLogins.filter(login => 
+      new Date(login.loginTime) > tenMinutesAgo
+    );
+    
+    setAllLogins(recentLogins);
+    localStorage.setItem('allLogins', JSON.stringify(recentLogins));
+    window.dispatchEvent(new Event('storage'));
   };
 
-  // Clear all session data (for testing)
-  const clearAllSessions = async () => {
-    if (confirm('Clear all session data? This will log out all users.')) {
-      try {
-        const response = await fetch(`${API_BASE}/clear-sessions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' }
-        });
+  // Get recent logins (last 10 minutes)
+  const getRecentLogins = () => {
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+    return allLogins.filter(login => new Date(login.loginTime) > tenMinutesAgo);
+  };
 
-        const data = await response.json();
+  // Get active users
+  const getActiveUsers = () => {
+    return allLogins.filter(login => login.isActive);
+  };
 
-        if (data.success) {
-          setLoginSessions([]);
-          setActiveUsers([]);
-          setStats({ totalSessions: 0, activeSessions: 0 });
-          localStorage.removeItem('currentUser');
-          setCurrentUser(null);
-          setIsLoggedIn(false);
-        }
-      } catch (error) {
-        console.error('Error clearing sessions:', error);
-        alert('Failed to clear sessions');
-      }
-    }
+  // Format time ago
+  const timeAgo = (dateString) => {
+    const now = new Date();
+    const loginTime = new Date(dateString);
+    const diffMinutes = Math.round((now - loginTime) / 1000 / 60);
+    
+    if (diffMinutes < 1) return 'Just now';
+    if (diffMinutes === 1) return '1 minute ago';
+    if (diffMinutes < 60) return `${diffMinutes} minutes ago`;
+    
+    const diffHours = Math.round(diffMinutes / 60);
+    if (diffHours === 1) return '1 hour ago';
+    return `${diffHours} hours ago`;
   };
 
   // Format date/time
   const formatDate = (dateString) => {
     if (!dateString) return 'Never';
-    return new Date(dateString).toLocaleDateString() + ' ' + new Date(dateString).toLocaleTimeString();
-  };
-
-  // Format duration
-  const formatDuration = (minutes) => {
-    if (minutes === 0) return '< 1m';
-    if (minutes < 60) return `${minutes}m`;
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return `${hours}h ${mins}m`;
-  };
-
-  // Get load testing stats
-  const getLoadTestingStats = () => {
-    const totalSessions = stats.totalSessions;
-    const activeSessions = stats.activeSessions;
-    const uniqueUsers = new Set(loginSessions.map(s => s.email)).size;
-    const avgSessionTime = loginSessions
-      .filter(s => !s.isActive && s.sessionDuration > 0)
-      .reduce((sum, s) => sum + s.sessionDuration, 0) / Math.max(1, loginSessions.filter(s => !s.isActive).length);
-
-    return {
-      totalSessions,
-      activeSessions,
-      uniqueUsers,
-      avgSessionTime: Math.round(avgSessionTime) || 0
-    };
+    return new Date(dateString).toLocaleString();
   };
 
   // Login Page Component
   if (!isLoggedIn) {
+    const recentLogins = getRecentLogins();
+    
     return (
       <div className="login-container">
         <div className="login-card">
           <div className="login-header">
-            <h1>Load Testing Portal</h1>
-            <p>User Login Simulation</p>
+            <h1>🧪 Load Testing Portal</h1>
+            <p>Login to see real-time user tracking</p>
           </div>
           
           <form onSubmit={handleLogin} className="login-form">
@@ -237,200 +236,196 @@ function App() {
               />
             </div>
             
-            <button type="submit" className="btn btn-primary login-btn" disabled={loading}>
-              {loading ? 'Connecting...' : 'Simulate Login'}
+            <button type="submit" className="btn btn-primary login-btn">
+              Simulate Login
             </button>
           </form>
           
           <div className="login-footer">
-            <p>🧪 Load Testing Mode - Any credentials accepted</p>
-            <p>Real-time session tracking enabled</p>
+            <p><strong>For Load Testing:</strong> Any credentials accepted</p>
+            <p><strong>Recent Logins ({recentLogins.length}):</strong></p>
+            {recentLogins.length > 0 ? (
+              <div className="recent-logins">
+                {recentLogins.slice(-5).map(login => (
+                  <div key={login.id} className="recent-login">
+                    <strong>{login.email}</strong> - {timeAgo(login.loginTime)}
+                    {login.isActive && <span className="active-badge">🟢 Active</span>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p>No recent logins</p>
+            )}
           </div>
         </div>
       </div>
     );
   }
 
-  const stats = getLoadTestingStats();
+  // Main Dashboard
+  const recentLogins = getRecentLogins();
+  const activeUsers = getActiveUsers();
 
   return (
-    <div className="app">
-      {currentView === 'dashboard' ? (
-        // Load Testing Dashboard
-        <div className="dashboard">
-          <div className="dashboard-header">
-            <div className="dashboard-title">
-              <h1>🧪 Load Testing Dashboard</h1>
-              <div className="dashboard-stats">
-                <span className="stat-card">
-                  <strong>{stats.activeSessions}</strong> Active Users
-                </span>
-                <span className="stat-card">
-                  <strong>{stats.totalSessions}</strong> Total Sessions
-                </span>
-                <span className="stat-card">
-                  <strong>{stats.uniqueUsers}</strong> Unique Users
-                </span>
-                <span className="stat-card">
-                  <strong>{stats.avgSessionTime}m</strong> Avg Session
-                </span>
-              </div>
-            </div>
-            <div className="header-actions">
-              <span className="user-info">Logged in as: {currentUser?.email}</span>
-              <button className="btn btn-secondary" onClick={() => setCurrentView('active')}>
-                Active Users ({activeUsers.length})
-              </button>
-              <button className="btn btn-secondary" onClick={() => setCurrentView('sessions')}>
-                All Sessions ({loginSessions.length})
-              </button>
-              <button className="btn btn-warning" onClick={clearAllSessions}>
-                Clear Data
-              </button>
-              <button className="btn btn-danger" onClick={handleLogout}>
-                Logout
-              </button>
-            </div>
+    <div className="app-container">
+      <header className="app-header">
+        <div className="header-content">
+          <h1>🧪 Load Testing Dashboard</h1>
+          <div className="header-stats">
+            <span className="stat">👥 {activeUsers.length} Active</span>
+            <span className="stat">📊 {recentLogins.length} Recent (10min)</span>
+            <span className="stat">📧 {currentUser?.email}</span>
           </div>
-          
-          {/* Real-time Active Users */}
-          <div className="active-users-section">
-            <h2>🟢 Currently Active Users</h2>
-            <div className="users-grid">
-              {activeUsers.map(user => (
-                <div key={user.id} className="user-card">
-                  <div className="user-header">
-                    <div className="user-email">{user.email}</div>
-                    <div className="user-status active">ACTIVE</div>
-                  </div>
-                  <div className="user-details">
-                    <div className="credential-row">
-                      <span className="label">Password:</span>
-                      <span className="value password-value">{user.password}</span>
-                    </div>
-                    <div className="credential-row">
-                      <span className="label">Login Time:</span>
-                      <span className="value">{formatDate(user.loginTime)}</span>
-                    </div>
-                    <div className="credential-row">
-                      <span className="label">Session Duration:</span>
-                      <span className="value">{formatDuration(Math.round((new Date() - new Date(user.loginTime)) / 1000 / 60))}</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-              
-              {activeUsers.length === 0 && (
-                <div className="empty-state">
-                  <p>No active users currently logged in</p>
-                  <p>Open multiple browser tabs/windows to simulate load testing</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      ) : currentView === 'active' ? (
-        // Active Users View
-        <div className="sessions-view">
-          <div className="sessions-header">
-            <button className="back-btn" onClick={() => setCurrentView('dashboard')}>
-              ← Back to Dashboard
+          <div className="header-actions">
+            <button className="btn btn-warning" onClick={clearOldLogins}>
+              Clear Old (10min+)
             </button>
-            <h1>🟢 Active Users ({activeUsers.length})</h1>
-            <div className="header-actions">
-              <button className="btn btn-primary" onClick={() => window.location.reload()}>
-                Refresh
-              </button>
-            </div>
-          </div>
-          
-          <div className="sessions-content">
-            <div className="sessions-table">
-              <div className="sessions-table-header">
-                <div>Email</div>
-                <div>Password</div>
-                <div>Login Time</div>
-                <div>Session Duration</div>
-                <div>Status</div>
-              </div>
-              
-              {activeUsers.map(user => (
-                <div key={user.id} className="sessions-table-row">
-                  <div className="session-email">{user.email}</div>
-                  <div className="session-password">{user.password}</div>
-                  <div className="session-time">{formatDate(user.loginTime)}</div>
-                  <div className="session-duration">{formatDuration(Math.round((new Date() - new Date(user.loginTime)) / 1000 / 60))}</div>
-                  <div className="session-status">
-                    <span className="status-badge status-live">ACTIVE</span>
-                  </div>
-                </div>
-              ))}
-              
-              {activeUsers.length === 0 && (
-                <div className="empty-sessions">
-                  <p>No active users. Open multiple browser tabs to simulate concurrent users.</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      ) : (
-        // All Sessions View
-        <div className="sessions-view">
-          <div className="sessions-header">
-            <button className="back-btn" onClick={() => setCurrentView('dashboard')}>
-              ← Back to Dashboard
+            <button className="btn btn-danger" onClick={handleLogout}>
+              Logout
             </button>
-            <h1>📊 All Sessions ({loginSessions.length})</h1>
-            <div className="header-actions">
-              <button className="btn btn-primary" onClick={() => window.location.reload()}>
-                Refresh
-              </button>
-            </div>
           </div>
-          
-          <div className="sessions-content">
-            <div className="sessions-table">
-              <div className="sessions-table-header">
-                <div>Email</div>
-                <div>Password</div>
-                <div>Login Time</div>
-                <div>Logout Time</div>
-                <div>Duration</div>
-                <div>Status</div>
+        </div>
+      </header>
+
+      <nav className="nav-tabs">
+        <button 
+          className={`nav-tab ${currentView === 'dashboard' ? 'active' : ''}`}
+          onClick={() => setCurrentView('dashboard')}
+        >
+          📊 Dashboard
+        </button>
+        <button 
+          className={`nav-tab ${currentView === 'active' ? 'active' : ''}`}
+          onClick={() => setCurrentView('active')}
+        >
+          🟢 Active Users ({activeUsers.length})
+        </button>
+        <button 
+          className={`nav-tab ${currentView === 'recent' ? 'active' : ''}`}
+          onClick={() => setCurrentView('recent')}
+        >
+          📋 Recent Logins ({recentLogins.length})
+        </button>
+      </nav>
+
+      <main className="main-content">
+        {currentView === 'dashboard' && (
+          <div className="dashboard">
+            <h2>📈 Real-Time Login Tracking</h2>
+            
+            <div className="stats-grid">
+              <div className="stat-card active">
+                <div className="stat-number">{activeUsers.length}</div>
+                <div className="stat-label">Currently Active</div>
               </div>
-              
-              {loginSessions.map((session, index) => (
-                <div key={index} className="sessions-table-row">
-                  <div className="session-email">{session.email}</div>
-                  <div className="session-password">{session.password}</div>
-                  <div className="session-time">{formatDate(session.loginTime)}</div>
-                  <div className="session-time">{session.logoutTime ? formatDate(session.logoutTime) : '-'}</div>
-                  <div className="session-duration">
-                    {session.isActive 
-                      ? formatDuration(Math.round((new Date() - new Date(session.loginTime)) / 1000 / 60))
-                      : formatDuration(session.sessionDuration)
-                    }
-                  </div>
-                  <div className="session-status">
-                    <span className={`status-badge ${session.isActive ? 'status-live' : 'status-draft'}`}>
-                      {session.isActive ? 'ACTIVE' : 'ENDED'}
-                    </span>
-                  </div>
+              <div className="stat-card">
+                <div className="stat-number">{recentLogins.length}</div>
+                <div className="stat-label">Last 10 Minutes</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-number">{new Set(recentLogins.map(l => l.email)).size}</div>
+                <div className="stat-label">Unique Users</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-number">{new Set(recentLogins.map(l => l.browser)).size}</div>
+                <div className="stat-label">Different Browsers</div>
+              </div>
+            </div>
+
+            <div className="quick-view">
+              <h3>🟢 Currently Active Users</h3>
+              {activeUsers.length > 0 ? (
+                <div className="active-users-list">
+                  {activeUsers.map(user => (
+                    <div key={user.id} className="active-user-item">
+                      <div className="user-info">
+                        <strong>{user.email}</strong>
+                        <span className="user-time">{timeAgo(user.loginTime)}</span>
+                      </div>
+                      <div className="user-details">
+                        <span className="password">🔑 {user.password}</span>
+                        <span className="browser">🌐 {user.browser}</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-              
-              {loginSessions.length === 0 && (
-                <div className="empty-sessions">
-                  <p>No login sessions recorded yet.</p>
-                </div>
+              ) : (
+                <p className="empty-message">No active users. Open multiple tabs to simulate load testing.</p>
               )}
             </div>
           </div>
-        </div>
-      )}
+        )}
+
+        {currentView === 'active' && (
+          <div className="users-view">
+            <h2>🟢 Currently Active Users ({activeUsers.length})</h2>
+            
+            {activeUsers.length > 0 ? (
+              <div className="users-table">
+                <div className="table-header">
+                  <div>Email</div>
+                  <div>Password</div>
+                  <div>Login Time</div>
+                  <div>Duration</div>
+                  <div>Browser</div>
+                </div>
+                {activeUsers.map(user => (
+                  <div key={user.id} className="table-row">
+                    <div className="cell email">{user.email}</div>
+                    <div className="cell password">{user.password}</div>
+                    <div className="cell time">{formatDate(user.loginTime)}</div>
+                    <div className="cell duration">{user.minutesActive}m</div>
+                    <div className="cell browser">{user.browser}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-state">
+                <p>No active users currently.</p>
+                <p><strong>To test:</strong> Open multiple browser tabs and login with different credentials.</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {currentView === 'recent' && (
+          <div className="sessions-view">
+            <h2>📋 Recent Logins - Last 10 Minutes ({recentLogins.length})</h2>
+            
+            {recentLogins.length > 0 ? (
+              <div className="users-table">
+                <div className="table-header">
+                  <div>Email</div>
+                  <div>Password</div>
+                  <div>Login Time</div>
+                  <div>Status</div>
+                  <div>Browser</div>
+                </div>
+                {recentLogins.map(login => (
+                  <div key={login.id} className="table-row">
+                    <div className="cell email">{login.email}</div>
+                    <div className="cell password">{login.password}</div>
+                    <div className="cell time">{formatDate(login.loginTime)}</div>
+                    <div className="cell status">
+                      <span className={`status-badge ${login.isActive ? 'active' : 'inactive'}`}>
+                        {login.isActive ? '🟢 Active' : '🔴 Logged out'}
+                      </span>
+                    </div>
+                    <div className="cell browser">{login.browser}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-state">
+                <p>No recent logins in the last 10 minutes.</p>
+                <p><strong>To start testing:</strong> Login with any credentials to begin tracking.</p>
+              </div>
+            )}
+          </div>
+        )}
+      </main>
     </div>
-  )
+  );
 }
 
 export default App
